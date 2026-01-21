@@ -1,6 +1,6 @@
 from .darts import darts_router
 from .get_stars import get_stars_router
-from .gift_miner import miner_router
+from .gift_miner_router import miner_router
 from .user_profile import user_profile_router
 from .top_users import top_users_router
 from .tasks import get_tasks_router

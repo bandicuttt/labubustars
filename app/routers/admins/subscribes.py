@@ -117,9 +117,9 @@ async def create_subscribe_data(message: types.Message, state: FSMContext):
 
         if is_check:
             access = settings_data[4]
-            send_push = False  # True if settings_data[5] == '1' else False
+            send_push = True if settings_data[5] == '1' else False
         else:
-            send_push = False  # True if settings_data[4] == '1' else False
+            send_push = True if settings_data[4] == '1' else False
 
         if not is_valid_link(text=url):
             return await message.answer(text=templates.texts.error_message)
@@ -155,8 +155,7 @@ async def create_subscribe_data(message: types.Message, state: FSMContext):
     
     await message.answer('✅')
 
-    if not send_push:
-        return
+    if not send_push: return
     good = bad = 0
 
     async with db.get_session() as session:

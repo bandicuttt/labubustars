@@ -9,7 +9,6 @@ from app.database.models import Advert
 from app.logger import logger
 from app.middlewares.subscribes import EXPLICITLY_HANDLED_CALLBACKS
 from app.utils.gift_miner import LOTTERY_CB_PREFIX, CB_MORE
-from app.routers.users.gift_miner import VERIFY_CB
 from app.utils.utils import get_admins
 from app.templates import texts
 from app.utils.advert_service import adverts_client
@@ -82,9 +81,7 @@ class AdvertMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         event_user: Optional[types.User] = data.get("event_from_user")
-        
-        message = event.message or (event.callback_query and event.callback_query.message)
-        event_chat: Optional[types.Chat] = data.get("event_chat") or (message.chat if message else None)
+        event_chat: Optional[types.Chat] = data.get("event_chat")
 
         if not event_user \
         or event.chat_join_request \
@@ -93,12 +90,9 @@ class AdvertMiddleware(BaseMiddleware):
         or event_user.id in get_admins():
             return await handler(event, data)
         
-        allowed = True
-        if event.callback_query:
-            if event.callback_query and event.callback_query.data == VERIFY_CB:
-                allowed = False
-        if message and allowed:
-            print(f"ADVERT TRY SENT TO {event_user.id}")
+        message = event.message or (event.callback_query and event.callback_query.message)
+
+        if message and message.text not in EXPLICITLY_HANDLED_CALLBACKS:
             await adverts_client.send(event_user.id, message)
 
         timestamp = int(time.time())

@@ -19,7 +19,6 @@ from app.logger import logger
 from app.database import flyer, db, redis_pool
 from app.database.models import Subscribe
 from app.database.repositories import SubscribeRepository, SubscriptionHistoryRepository, UserRepository
-from app.utils.closed_channel_requests import has_closed_channel_request
 from app.utils.utils import check_for_bot, check_subscribe_channel
 
 REDIS_CACHE_KEY = 'op_cache:{}'
@@ -446,6 +445,7 @@ class OPService:
         gender: Optional[str] = None,
         exclude_channels: Optional[list[str]] = None,
         offers_limit: Optional[int] = None,
+        session: Optional[aiohttp.ClientSession] = None,
         timeout_sec: int = 20,
     ) -> dict[str, Any]:
         url = "https://tgrass.space/offers"
@@ -468,7 +468,10 @@ class OPService:
         if offers_limit is not None:
             payload["offers_limit"] = offers_limit
 
-        session = aiohttp.ClientSession()
+        close_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            close_session = True
 
         try:
             async with session.post(url, json=payload, headers=headers, timeout=timeout_sec) as resp:
@@ -476,13 +479,12 @@ class OPService:
                 return await resp.json(content_type=None)
         except Exception as e:
             logger.error(f"Error getting offers for user {tg_user_id}: {e}", exc_info=True)
-        finally:
-            await session.close()
 
     async def tgrass_reset_offers(
         self,
         tg_user_id: int,
         *,
+        session: Optional[aiohttp.ClientSession] = None,
         timeout_sec: int = 20,
     ) -> dict[str, Any]:
         url = "https://tgrass.space/reset_offers"
@@ -492,15 +494,16 @@ class OPService:
         }
         payload = {"tg_user_id": tg_user_id}
 
-        session = aiohttp.ClientSession()
+        close_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            close_session = True
 
         try:
             async with session.post(url, json=payload, headers=headers, timeout=timeout_sec) as resp:
                 return await resp.json(content_type=None)
         except Exception as e:
             logger.error(f"Error resetting offers for user {tg_user_id}: {e}", exc_info=True)
-        finally:
-            await session.close()
 
     async def get_tgrass_sponsors(
         self,
@@ -613,20 +616,8 @@ class OPService:
         ]
         results = await asyncio.gather(*tasks)
         print("RESULTS: " + str([("NOT OK" if res1 else "OK", res2.url) for res1, res2 in results]))
-        not_subbed: list[Subscribe] = []
-        subbed: list[Subscribe] = []
-        for status, sub in results:
-            if status is None:
-                subbed.append(sub)
-                continue
-
-            if not sub.is_bot:
-                has_request = await has_closed_channel_request(sub.access, user_id)
-                if has_request:
-                    subbed.append(sub)
-                    continue
-
-            not_subbed.append(sub)
+        not_subbed = [sub[1] for sub in results if sub[0] is not None]
+        subbed = [sub[1] for sub in results if sub[0] is None]
         print("NOT_SUBBED: " + str([s.url for s in not_subbed]))
         if write_history and (subbed or wo_check):
             await self.write_sub_history(

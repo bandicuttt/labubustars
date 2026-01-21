@@ -11,7 +11,6 @@ from app.database.models import User
 from app.database import repositories, db
 from app.templates import texts
 from app.routers.start import send_main_menu
-from app.utils.closed_channel_requests import save_closed_channel_request
 from app.utils.utils import get_admins
 from app.utils.misc_function import get_time_now
 from app.logger import logger
@@ -40,7 +39,7 @@ async def start_menu(message: types.ChatMemberUpdated, user: User | None):
 
     if not member_id == bot_id:
         return
-
+    
     async with db.get_session() as session:
         chat_repo = repositories.UserChatRepository(session)
 
@@ -92,7 +91,6 @@ async def new_chat_members(message: types.Message):
         text=texts.user_chat_new_member
     )
 
-
 @event_chat_router.message(F.left_chat_member)
 async def new_chat_members(message: types.Message):
     return
@@ -100,22 +98,10 @@ async def new_chat_members(message: types.Message):
 
     if left_member.id == message.bot.id:
         return
-
+    
     await message.answer(
         text=texts.user_chat_left_member
     )
-
-
-@event_chat_router.chat_join_request()
-async def on_chat_join_request(request: types.ChatJoinRequest):
-    if request.chat.type != ChatType.CHANNEL:
-        return
-
-    await save_closed_channel_request(
-        chat_id=request.chat.id,
-        user_id=request.from_user.id,
-    )
-
 
 @event_chat_router.callback_query(F.data.startswith('check_subscribe'))
 async def check_subscribe(call: types.CallbackQuery, state: FSMContext):
@@ -124,9 +110,9 @@ async def check_subscribe(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer(text=texts.subscribe_done_message)
     await send_main_menu(call.message)
 
-
 @event_chat_router.error()
 async def forbidden_handler(update: types.Update, exception: Exception):
+
     if isinstance(exception, TelegramForbiddenError, TelegramBadRequest):
         user_id = None
         if update.message:
@@ -144,17 +130,16 @@ async def forbidden_handler(update: types.Update, exception: Exception):
 
     logger.error(
         f"Необработанная ошибка при обработке update={update}",
-        exc_info=exception
+        exc_info=exception 
     )
     return False
 
-
 @event_chat_router.message(IsPrivate())
 async def main_missed(message: types.Message):
+    # print(message.photo[0])
     with suppress(TelegramBadRequest):
         await message.delete()
     await send_main_menu(message)
-
 
 @event_chat_router.callback_query(IsPrivate())
 async def main_missed(call: types.CallbackQuery):
