@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bot_stars
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BOT_USERNAME=${BOT_USERNAME}
+      - ADMINS=${ADMINS}
+      - SKIP_UPDATES=True
+      - DEBUG_MODE=True
+      - PG_DEBUG_MODE=False
+      - REDIS_DEBUG_MODE=False
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_HOST=postgres
+      - REDIS_DB=${REDIS_DB}
+      - REDIS_JOBSTORE_DB=${REDIS_JOBSTORE_DB}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_HOST=redis
+      - TIMEZONE=${TIMEZONE}
+      - FLYER_API_KEY=${FLYER_API_KEY}
+      - SUBGRAM_API_KEY=${SUBGRAM_API_KEY}
+      - GRAMADS_API_KEY=${GRAMADS_API_KEY}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./temp:/app/temp
+      - ./gifts:/app/gifts
+      - ./dumps:/app/dumps
+      - .:/app
+    networks:
+      - bot_network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: bot_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    networks:
+      - bot_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: bot_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - bot_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: bot_pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - bot_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bot_network:
+    driver: bridge
