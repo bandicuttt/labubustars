@@ -88,9 +88,7 @@ async def send_push_to_inactive_users():
     Находит пользователей, ставших неактивными ровно 24 часа назад,
     и отправляет им пуш-сообщение.
     """
-    disabled = True
-    if disabled:
-        return
+
     threshold_time = get_time_now() - timedelta(hours=24)
 
     async with db.get_session() as session:
@@ -150,6 +148,7 @@ async def daily_backup():
                     ),
                     disable_notification=True
                 )
+
             for file in await user_repo.create_dump():
                 for admin in admins:
                     await bot.send_document(
@@ -430,7 +429,6 @@ def validate_botstat_token(token: str):
 
 async def check_subs():
     return
-
 
 async def check_subscribe_channel(user_id: int, sub: Subscribe):
     try:

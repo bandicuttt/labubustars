@@ -377,6 +377,9 @@ def withdrawal_menu_kb():
 def main_user() -> dict:
     keyboard = {'inline_keyboard':[
         [
+            {'text': '✈️ Самолётик', 'callback_data': 'plane'}
+        ],
+        [
             {'text': '✨ Кликер', 'callback_data': 'clicker'}
         ],
         [
@@ -433,6 +436,18 @@ def tasks_kb(subscribes: list[models.Subscribe]) -> dict:
             ]
         ]
     }
+
+    return keyboard
+
+def plane_kb(url: str) -> dict:
+    keyboard = {'inline_keyboard':[
+        [
+            {'text': '✈️ Начать полёт', 'web_app': {'url': url}},
+        ],
+        [
+            {'text': '⬅️ В главное меню', 'callback_data': 'main_menu'},
+        ],
+    ]}
 
     return keyboard
 
@@ -503,7 +518,7 @@ def darts_after_win_kb() -> dict:
     return keyboard
 
 
-def friends_invite_kb(ref_link: str) -> dict:
+def darts_invite_kb(ref_link: str) -> dict:
     share_url = f"https://t.me/share/url?url={quote(ref_link)}"
     keyboard = {'inline_keyboard': [
         [
@@ -519,23 +534,21 @@ def friends_invite_kb(ref_link: str) -> dict:
     return keyboard
 
 
-def pseudo_gift_kb(mini_game_btn: bool | str = True, start_bonus_url: str | None = None, bonus_txt: str = None) -> dict:
-    mini_game_btn_txt = mini_game_btn if isinstance(mini_game_btn, str) else "🎣 Словить рыбку"
+def pseudo_gift_kb(start_bonus_url: str | None = None) -> dict:
     keyboard = {'inline_keyboard': [
         [
-            {'text': mini_game_btn_txt, 'callback_data': 'fish:start'},
+            {'text': "🎯 Кинуть дротик", 'callback_data': 'start_dart'},
         ],
     ]}
 
-    keyboard = keyboard if mini_game_btn else {'inline_keyboard': []}
     bonus_url = start_bonus_url or getattr(config, "START_BONUS_URL", None)
     if bonus_url:
-        bonus_txt = bonus_txt or "Забрать 100⭐ за старт ↗"
         keyboard['inline_keyboard'].append([
-            {'text': bonus_txt, 'url': bonus_url},
+            {'text': 'Забрать 100⭐ за старт ↗', 'url': bonus_url},
         ])
 
     return keyboard
+
 
 
 def subscribe_our_channels() -> dict:

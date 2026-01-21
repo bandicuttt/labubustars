@@ -8,7 +8,10 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', '8325279009')
 BOT_USERNAME = os.getenv('BOT_USERNAME', 'bear_free_bot')
 ADMINS = list(map(int, os.getenv('ADMINS', '452341151').split(',')))
 SKIP_UPDATES = os.getenv('SKIP_UPDATES', 'True').lower() == 'true'
-
+PLANEAPP_URL = os.getenv('PLANEAPP_URL', 'https://google.com')
+PLANEAPP_SIGN_SECRET = os.getenv('PLANEAPP_SIGN_SECRET', BOT_TOKEN)
+PLANEAPP_LINK_TTL_SECONDS = int(os.getenv('PLANEAPP_LINK_TTL_SECONDS', '900'))
+ADSGRAM_BLOCK_ID = os.getenv('ADSGRAM_BLOCK_ID', '')
 # SUBSCRIBES & TASKS
 FLYER_API_KEY = os.getenv('FLYER_API_KEY', 'FL-ZmHMm')
 SUBGRAM_API_KEY = os.getenv('SUBGRAM_API_KEY', '')

@@ -40,7 +40,7 @@ async def send_pseudo_gift(msg: types.Message):
     mkp = pseudo_gift_kb(start_bonus_url=start_bonus_url)
 
     photo = LOCAL_PHOTO_CACHE.get("darts_start")
-    txt = "<b>🎣Поймай мишку!🧸</b>"
+    txt = "<b>🎯Попади в яблочко - забери мишку🧸</b>"
 
     if photo:
         # Отправляем по file_id
@@ -53,7 +53,7 @@ async def send_pseudo_gift(msg: types.Message):
         return
 
     # --- Если file_id еще нет — загружаем файл с диска ---
-    img_path = 'app/static/cheba_fishing.jpg'
+    img_path = 'app/static/darts_start.jpg'
     photo_file = types.FSInputFile(img_path)
     message = await msg.answer_photo(
         photo=photo_file,

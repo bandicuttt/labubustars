@@ -3,9 +3,13 @@ import config
 import time
 import random
 import json
+import hmac
+import hashlib
+import secrets
 
 from datetime import timedelta
 from contextlib import suppress
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from loader import bot
 
@@ -13,10 +17,10 @@ from aiogram import Router, types, F, Bot
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-
 from app.utils.scheduler_instance import scheduler
 from app.routers.start import send_main_menu
 from app.utils.misc_function import get_time_now, get_remaining_time
+from app.utils.botohub_reward import ensure_botohub_reward_message, get_botohub_reward_remaining
 from app.database.repositories.user_repo import UserRepository
 from app.templates import texts
 from app import keyboards as kb
@@ -27,10 +31,311 @@ from app.states.games import GameState
 from app.utils.utils import check_win
 from app.utils.captcha_logic import *
 
+from op.services.op_service import op_client
+
 
 games_router = Router(name='games_router')
 
 active_captchas = {}
+
+
+PLANE_SPONSORS_PER_ATTEMPT = 4
+PLANE_AD_DAILY_LIMIT = 2
+PLANE_STAGE_ORDER = ("manual", "flyer", "subgram", "tgrass", "botohub")
+PLANE_DONE_CB = "check_plane"
+PLANE_STAGE_KEY = "plane:stage:{user_id}:{day}"
+PLANE_AD_COUNT_KEY = "plane:ad_count:{user_id}:{day}"
+PLANE_PENDING_KEY = "plane:pending:{user_id}:{day}"
+PLANE_PENDING_META_KEY = "plane:pending_meta:{user_id}:{day}"
+
+
+def _plane_sig(*parts: str) -> str:
+    msg = "|".join(parts).encode("utf-8")
+    secret = str(config.PLANEAPP_SIGN_SECRET).encode("utf-8")
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()
+
+
+def _normalize_plane_base_url(url: str) -> str:
+    u = urlparse(url)
+    p = u.path
+    if p.endswith("/plane/"):
+        p = p[:-1]
+    return urlunparse((u.scheme, u.netloc, p, u.params, u.query, u.fragment))
+
+
+def _add_query_params(url: str, params: dict[str, str]) -> str:
+    u = urlparse(url)
+    q = dict(parse_qsl(u.query, keep_blank_values=True))
+    q.update(params)
+    new_query = urlencode(q)
+    return urlunparse((u.scheme, u.netloc, u.path, u.params, new_query, u.fragment))
+
+
+def _plane_day_and_ttl() -> tuple[str, int]:
+    now = get_time_now()
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    ttl = int((tomorrow - now).total_seconds())
+    if ttl <= 0:
+        ttl = 60 * 60 * 24
+    return now.strftime("%Y%m%d"), ttl
+
+
+async def get_plane_ad_count(user_id: int) -> int:
+    day, _ = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        value = await redis.get(PLANE_AD_COUNT_KEY.format(user_id=user_id, day=day))
+    if value is None:
+        return 0
+    return int(value)
+
+
+async def get_plane_stage_index(user_id: int) -> int:
+    day, _ = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        value = await redis.get(PLANE_STAGE_KEY.format(user_id=user_id, day=day))
+    if value is None:
+        return 0
+    return int(value)
+
+
+async def set_plane_stage_index(user_id: int, index: int) -> None:
+    day, ttl = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        await redis.set(
+            PLANE_STAGE_KEY.format(user_id=user_id, day=day),
+            index,
+            ex=ttl,
+        )
+
+
+async def get_plane_pending_attempt(user_id: int) -> tuple[bool, int | None]:
+    day, _ = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        pending = bool(await redis.get(PLANE_PENDING_KEY.format(user_id=user_id, day=day)))
+        if not pending:
+            return False, None
+        stage_index_raw = await redis.hget(PLANE_PENDING_META_KEY.format(user_id=user_id, day=day), "stage_index")
+    stage_index = int(stage_index_raw) if stage_index_raw is not None else None
+    return True, stage_index
+
+
+async def set_plane_pending_attempt(user_id: int, stage_index: int | None = None) -> None:
+    day, ttl = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        await redis.set(PLANE_PENDING_KEY.format(user_id=user_id, day=day), 1, ex=ttl)
+        if stage_index is not None:
+            await redis.hset(
+                PLANE_PENDING_META_KEY.format(user_id=user_id, day=day),
+                "stage_index",
+                stage_index,
+            )
+            await redis.expire(PLANE_PENDING_META_KEY.format(user_id=user_id, day=day), ttl)
+
+
+async def clear_plane_pending_attempt(user_id: int) -> None:
+    day, _ = _plane_day_and_ttl()
+    async with redis_pool.get_connection() as redis:
+        await redis.delete(PLANE_PENDING_KEY.format(user_id=user_id, day=day))
+        await redis.delete(PLANE_PENDING_META_KEY.format(user_id=user_id, day=day))
+
+
+async def get_plane_stage_sponsors(
+    stage: str,
+    user_id: int,
+    language_code: str,
+    message: types.Message | types.CallbackQuery,
+) -> types.InlineKeyboardMarkup | None:
+    if stage == "manual":
+        return await op_client.check(
+            user_id=user_id,
+            language_code=language_code,
+            message=message,
+            no_flyer=True,
+            no_subgram=True,
+            no_manual=False,
+            done_cb=PLANE_DONE_CB,
+        )
+    if stage == "flyer":
+        return await op_client.check(
+            user_id=user_id,
+            language_code=language_code,
+            message=message,
+            no_flyer=False,
+            no_subgram=True,
+            no_manual=True,
+            done_cb=PLANE_DONE_CB,
+            max_op=PLANE_SPONSORS_PER_ATTEMPT,
+        )
+    if stage == "subgram":
+        return await op_client.check(
+            user_id=user_id,
+            language_code=language_code,
+            message=message,
+            no_flyer=True,
+            no_subgram=False,
+            no_manual=True,
+            done_cb=PLANE_DONE_CB,
+            max_op=PLANE_SPONSORS_PER_ATTEMPT,
+        )
+    if stage == "tgrass":
+        return await op_client.check_tgrass(
+            user_id=user_id,
+            language_code=language_code,
+            message=message,
+            done_cb=PLANE_DONE_CB,
+            max_op=PLANE_SPONSORS_PER_ATTEMPT,
+        )
+    if stage == "botohub":
+        return await op_client.check_botohub(
+            user_id=user_id,
+            done_cb=PLANE_DONE_CB,
+        )
+    return None
+
+
+def _build_plane_url(user_id: int, ad: bool = False) -> str:
+    run = secrets.token_urlsafe(10)
+    uid = str(user_id)
+    exp = str(int(time.time()) + int(config.PLANEAPP_LINK_TTL_SECONDS))
+    seed = str(random.randint(1, 2_000_000_000))
+    reward = f"{0.10 + (random.Random(int(seed)).random() * 0.90):.2f}"
+    ad_flag = "1" if ad else "0"
+    sig = _plane_sig(run, uid, exp, seed, reward, ad_flag)
+    params: dict[str, str] = {
+        "run": run,
+        "uid": uid,
+        "exp": exp,
+        "seed": seed,
+        "reward": reward,
+        "sig": sig,
+        "ad": ad_flag,
+    }
+    if ad and getattr(config, "ADSGRAM_BLOCK_ID", ""):
+        params["abid"] = str(getattr(config, "ADSGRAM_BLOCK_ID"))
+    return _add_query_params(
+        _normalize_plane_base_url(config.PLANEAPP_URL),
+        params,
+    )
+
+
+async def _send_plane(call: types.CallbackQuery, ad: bool = False) -> None:
+    url = _build_plane_url(call.from_user.id, ad=ad)
+    try:
+        await call.message.edit_media(
+            media=types.InputMediaPhoto(
+                media=config.GAMES_MENU_ID,
+            )
+        )
+        await call.message.edit_caption(
+            caption=texts.plane_text,
+            reply_markup=kb.inline.plane_kb(url),
+        )
+    except:
+        m = await bot.send_photo(
+            photo=config.GAMES_MENU_ID,
+            chat_id=call.from_user.id,
+            caption=texts.plane_text,
+            reply_markup=kb.inline.plane_kb(url),
+        )
+    await asyncio.sleep(10)
+    await send_main_menu(call.message)
+    with suppress(TelegramBadRequest, TelegramForbiddenError, UnboundLocalError):
+        await call.message.delete()
+        await m.delete()
+
+@games_router.callback_query(F.data=='plane')
+async def plane_game(call: types.CallbackQuery, user: User):
+    # await call.answer()
+    pending, pending_stage_index = await get_plane_pending_attempt(call.from_user.id)
+    if pending and pending_stage_index is not None:
+        stage_index = pending_stage_index
+    else:
+        stage_index = await get_plane_stage_index(call.from_user.id)
+
+    if stage_index >= len(PLANE_STAGE_ORDER):
+        ad_count = await get_plane_ad_count(call.from_user.id)
+        if ad_count >= PLANE_AD_DAILY_LIMIT:
+            await call.answer("😔 Лимит попыток самолётика на сегодня исчерпан", show_alert=True)
+            return await send_main_menu(call.message)
+        return await _send_plane(call, ad=True)
+
+    stage = PLANE_STAGE_ORDER[stage_index]
+    reply_markup = await get_plane_stage_sponsors(
+        stage=stage,
+        user_id=call.from_user.id,
+        language_code=(call.from_user.language_code or "ru"),
+        message=call,
+    )
+
+    if reply_markup:
+        await set_plane_pending_attempt(call.from_user.id, stage_index=stage_index)
+        with suppress(TelegramForbiddenError, TelegramBadRequest):
+            return await bot.send_photo(
+                photo=config.MAIN_MENU_ID,
+                chat_id=user.user_id,
+                caption=texts.subscribes_message,
+                reply_markup=reply_markup,
+            )
+        return None
+
+    if stage == "botohub":
+        await ensure_botohub_reward_message(call.from_user.id)
+
+    await set_plane_stage_index(call.from_user.id, stage_index + 1)
+    await clear_plane_pending_attempt(call.from_user.id)
+    return await _send_plane(call, ad=False)
+
+
+@games_router.callback_query(F.data == PLANE_DONE_CB, IsPrivate(), StateFilter("*"))
+async def check_plane(call: types.CallbackQuery, state: FSMContext, user: User):
+    pending, stage_index = await get_plane_pending_attempt(call.from_user.id)
+    if not pending or stage_index is None:
+        await call.answer()
+        return await send_main_menu(call.message)
+
+    if stage_index >= len(PLANE_STAGE_ORDER):
+        await clear_plane_pending_attempt(call.from_user.id)
+        await call.answer()
+        return await send_main_menu(call.message)
+
+    stage = PLANE_STAGE_ORDER[stage_index]
+    reply_markup = await get_plane_stage_sponsors(
+        stage=stage,
+        user_id=call.from_user.id,
+        language_code=(call.from_user.language_code or "ru"),
+        message=call,
+    )
+
+    if reply_markup:
+        with suppress(TelegramBadRequest, TelegramForbiddenError):
+            await call.message.delete()
+        await call.answer()
+        return await call.message.answer(text=texts.subscribes_message, reply_markup=reply_markup)
+
+    if stage == "botohub":
+        await ensure_botohub_reward_message(call.from_user.id)
+
+    with suppress(TelegramBadRequest, TelegramForbiddenError):
+        await call.message.delete()
+
+    await clear_plane_pending_attempt(call.from_user.id)
+    await state.clear()
+
+    if stage == "tgrass":
+        await op_client.tgrass_reset_offers(call.from_user.id)
+
+    await set_plane_stage_index(call.from_user.id, stage_index + 1)
+    await call.answer()
+    return await _send_plane(call, ad=False)
+
+
+@games_router.message(F.text.startswith("🎁 Награда"), IsPrivate(), StateFilter("*"))
+async def botohub_reward_status(message: types.Message):
+    await ensure_botohub_reward_message(message.from_user.id)
+    remaining = await get_botohub_reward_remaining(message.from_user.id)
+    if remaining is None:
+        return await message.answer("ℹ️ Сейчас нет активного таймера награды за подписки")
+    return await message.answer(f"⏳ Награда за подписки придёт через {remaining}")
 
 @games_router.callback_query(F.data.startswith('captcha:'))
 async def handle_captcha(call: types.CallbackQuery, user: User):

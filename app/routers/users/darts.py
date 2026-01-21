@@ -12,6 +12,7 @@ from app.keyboards import inline
 from app.templates import texts
 from app.routers.start import send_main_menu
 from app.utils.gift_service import issue_gift_via_giftly
+from app.utils.botohub_reward import ensure_botohub_reward_message
 from op.services.op_service import op_client
 
 
@@ -181,12 +182,7 @@ async def find_sponsors(
 
 
 async def send_no_sponsors(message: types.Message) -> None:
-    bot = await message.bot.get_me()
-    ref_link = f"https://t.me/{bot.username}?start={message.from_user.id}"
-    await message.answer(
-        texts.darts_no_sponsors_message,
-        reply_markup=inline.friends_invite_kb(ref_link),
-    )
+    await ensure_botohub_reward_message(message.from_user.id)
 
 
 @darts_router.callback_query(F.data == "start_dart", IsPrivate(), StateFilter("*"))
@@ -355,7 +351,7 @@ async def check_referrals_for_darts(call: types.CallbackQuery):
         await call.answer()
         return await call.message.answer(
             texts.darts_referral_progress_message.format(current=total_subbed),
-            reply_markup=inline.friends_invite_kb(
+            reply_markup=inline.darts_invite_kb(
                 f"https://t.me/{(await call.bot.get_me()).username}?start={call.from_user.id}"
             ),
         )
@@ -368,3 +364,4 @@ async def check_referrals_for_darts(call: types.CallbackQuery):
         texts.darts_referral_bonus_message,
         reply_markup=inline.darts_after_win_kb(),
     )
+

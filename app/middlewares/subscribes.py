@@ -24,7 +24,6 @@ EXPLICITLY_HANDLED_CALLBACKS = {
     f"check_dart",
     "darts:check_referrals",
     CB_MORE,
-    "fish:",
 }
 
 

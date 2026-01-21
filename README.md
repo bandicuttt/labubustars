@@ -1,2 +1,0 @@
-# labubustars
-stars_bot

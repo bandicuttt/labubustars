@@ -9,6 +9,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.database import redis_pool
 from app.utils.misc_function import get_time_now
 from app.utils.scheduler_instance import scheduler
+from app.utils.botohub_reward import update_botohub_reward_messages
 from app.utils.utils import daily_backup, check_subs, send_push_to_inactive_users, send_channel_posts
 
 
@@ -27,6 +28,13 @@ async def scheduler_start():
             check_subs,
             IntervalTrigger(minutes=5, jitter=30),
             id='subscription_check',
+            replace_existing=True
+        )
+
+        scheduler.add_job(
+            update_botohub_reward_messages,
+            IntervalTrigger(seconds=60, jitter=30),
+            id='botohub_reward_update',
             replace_existing=True
         )
 

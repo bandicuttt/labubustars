@@ -1,9 +1,21 @@
 import asyncio
 import config
+import time
+import hmac
+import hashlib
+from urllib.parse import quote
+
+from datetime import datetime, timedelta
+
+import pytz
+
+from pathlib import Path
 
 from redis.asyncio import Redis
 from contextlib import suppress
 from fastapi import FastAPI, Request, Depends
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
@@ -18,8 +30,127 @@ from app.templates.texts import unsubscribe_subgram_message
 from app.keyboards.inline import subgram_unsubscribed_kb
 from app.database.repositories.user_repo import UserRepository
 
-
 app = FastAPI()
+
+PLANEAPP_DIR = Path(__file__).resolve().parent / "planeapp"
+
+
+def _plane_day_and_ttl() -> tuple[str, int]:
+    tz = pytz.timezone(getattr(config, "TIMEZONE", "UTC"))
+    now = datetime.now(tz)
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    ttl = int((tomorrow - now).total_seconds())
+    if ttl <= 0:
+        ttl = 60 * 60 * 24
+    return now.strftime("%Y%m%d"), ttl
+
+
+def _plane_sig(*parts: str) -> str:
+    msg = "|".join(parts).encode("utf-8")
+    secret = str(config.PLANEAPP_SIGN_SECRET).encode("utf-8")
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()
+
+
+@app.get("/plane")
+async def plane_root(request: Request):
+    qp = request.query_params
+    run = qp.get("run")
+    uid = qp.get("uid")
+    exp = qp.get("exp")
+    seed = qp.get("seed")
+    reward = qp.get("reward")
+    sig = qp.get("sig")
+    ad = qp.get("ad")
+    abid = qp.get("abid")
+
+    bot_username = str(getattr(config, "BOT_USERNAME", "")).lstrip("@")
+    back_url = f"https://t.me/{bot_username}" if bot_username else ""
+    back_q = quote(back_url, safe="") if back_url else ""
+
+    if not (run and uid and exp and seed and reward and sig):
+        q = request.url.query
+        url = "/plane/" + (f"?{q}" if q else "")
+        return RedirectResponse(url=url)
+
+    try:
+        uid_i = int(uid)
+        exp_i = int(exp)
+        seed_i = int(seed)
+        reward_f = float(reward)
+    except (TypeError, ValueError):
+        return RedirectResponse(url="/plane/")
+
+    if exp_i < int(time.time()):
+        return RedirectResponse(url="/plane/")
+
+    if seed_i <= 0 or seed_i > 2_147_483_647:
+        return RedirectResponse(url="/plane/")
+
+    if reward_f < 0 or reward_f > 1:
+        return RedirectResponse(url="/plane/")
+
+    ad_flag = "1" if str(ad).lower() in {"1", "true", "yes"} else "0"
+
+    expected = _plane_sig(run, str(uid_i), str(exp_i), str(seed_i), f"{reward_f:.2f}", ad_flag)
+    if not hmac.compare_digest(expected, sig):
+        if ad is None:
+            expected_legacy = _plane_sig(run, str(uid_i), str(exp_i), str(seed_i), f"{reward_f:.2f}")
+            if not hmac.compare_digest(expected_legacy, sig):
+                return RedirectResponse(url="/plane/")
+        else:
+            return RedirectResponse(url="/plane/")
+
+    ttl = max(1, exp_i - int(time.time()))
+    redis_key = f"plane:run:{run}"
+
+    async with redis_pool.get_connection() as redis:
+        claimed = await redis.set(redis_key, "1", ex=ttl, nx=True)
+
+    if not claimed:
+        url = f"/plane/?seed={seed_i}" + (f"&back={back_q}" if back_q else "")
+        if ad_flag == "1":
+            url += "&ad=1"
+            if abid:
+                url += f"&abid={quote(str(abid), safe='')}"
+        return RedirectResponse(url=url)
+
+    if ad_flag == "1":
+        day, day_ttl = _plane_day_and_ttl()
+        ad_count_key = f"plane:ad_count:{uid_i}:{day}"
+        async with redis_pool.get_connection() as redis:
+            new_count = await redis.incr(ad_count_key)
+            if new_count == 1:
+                await redis.expire(ad_count_key, day_ttl)
+        if new_count > 2:
+            url = f"/plane/?limit=1" + (f"&back={back_q}" if back_q else "")
+            return RedirectResponse(url=url)
+
+    async with db.get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_user(user_id=uid_i)
+        if not user:
+            url = f"/plane/?seed={seed_i}" + (f"&back={back_q}" if back_q else "")
+            if ad_flag == "1":
+                url += "&ad=1"
+                if abid:
+                    url += f"&abid={quote(str(abid), safe='')}"
+            return RedirectResponse(url=url)
+        await user_repo.update_user(
+            user_id=uid_i,
+            important_action=True,
+            balance=user.balance + reward_f,
+        )
+
+    url = f"/plane/?seed={seed_i}" + (f"&back={back_q}" if back_q else "")
+    if ad_flag == "1":
+        url += "&ad=1"
+        if abid:
+            url += f"&abid={quote(str(abid), safe='')}"
+    return RedirectResponse(url=url)
+
+
+app.mount("/plane", StaticFiles(directory=str(PLANEAPP_DIR), html=True), name="plane")
+
 
 async def proccess_user_reward(user: User, user_repo: UserRepository, url: str, redis_conn: Redis, push: bool = True):
     

@@ -40,19 +40,19 @@ class AdvertService:
                 advert_repo = repositories.AdvertRepository(session)
                 advert = await advert_repo.get_advert_by_id(advert)
             if not advert:
-                print(f"no advert found id{advert}")
                 return False
         try:
-            print(f"still sending adv to {user_id}")
-            await bot.copy_message(
-                chat_id=user_id,
-                from_chat_id=advert.from_chat_id,
-                message_id=advert.message_id,
-                reply_markup=advert.reply_markup
-            )
-            if write_history:
-                await self.write_advert_history(user_id=user_id, advert=advert)
-            return True
+            with suppress(TelegramForbiddenError, TelegramBadRequest):
+                await bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=advert.from_chat_id,
+                    message_id=advert.message_id,
+                    reply_markup=advert.reply_markup
+                )
+                if write_history:
+                    await self.write_advert_history(user_id=user_id, advert=advert)
+                return True
+            return False
         except Exception as e:
             logger.error(f"Error sending advert {advert.id} to user {user_id}: {e}", exc_info=True)
             return False
@@ -118,12 +118,9 @@ class AdvertService:
             return await advert_repo.get_advert_for_user(user_id, only_start)
 
     async def send(self, user_id: int, message: Message):
-        try: 
-            text = getattr(message, 'text', '')
-            only_start = False
-            if text:
-                text = text.strip()
-                only_start = text.startswith("/start")
+        try:            
+            text = getattr(message, 'text', '').strip()
+            only_start = text.startswith("/start")
             advert = await self.get_manual_advert(user_id, only_start)
 
             if advert and await self.send_advert(user_id, advert):
@@ -137,7 +134,6 @@ class AdvertService:
             return False  # Возвращаем False так как Gramads запущен в фоне
 
         except Exception as e:
-            print(str(e))
             return False
 
     def _get_spam_lock(self, user_id: int) -> asyncio.Lock:

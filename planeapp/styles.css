@@ -1,0 +1,83 @@
+:root {
+  --bg: #0b1220;
+  --text: rgba(255, 255, 255, 0.92);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  background: radial-gradient(1200px 800px at 20% 10%, rgba(102, 227, 255, 0.15), transparent 60%),
+    radial-gradient(1000px 700px at 80% 0%, rgba(74, 222, 128, 0.09), transparent 55%),
+    var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+.menu {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  padding: 18px;
+  background: radial-gradient(900px 600px at 50% 20%, rgba(0, 0, 0, 0.25), rgba(0,0,0,0.70));
+  backdrop-filter: blur(6px);
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.menuCard {
+  width: min(520px, 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+  padding: 18px;
+}
+
+.menuTitle {
+  font-weight: 900;
+  font-size: 24px;
+  letter-spacing: 0.2px;
+}
+
+.menuBtn {
+  margin-top: 16px;
+  width: 100%;
+  padding: 18px 16px;
+  border-radius: 16px;
+  border: 0;
+  font-weight: 900;
+  font-size: 20px;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.92);
+  background: linear-gradient(135deg, rgba(102, 227, 255, 0.95), rgba(74, 222, 128, 0.9));
+}
+
+.menuBtn:active {
+  transform: translateY(1px);
+}
